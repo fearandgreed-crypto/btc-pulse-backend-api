@@ -10,6 +10,8 @@ let cachedHistory = [];
 let cachedLivePrice = { price: 0, change: 0 };
 
 // 1. Function to fetch Historical Data
+// We stick to CryptoCompare for history because it's the only reliable free API 
+// that goes all the way back to 2013 for OHLC data. We added a delay to avoid rate limits.
 async function fetchHistory() {
     console.log("Fetching Historical Data...");
     let allData = [];
@@ -26,7 +28,7 @@ async function fetchHistory() {
             if (json.Response === 'Success' && json.Data && json.Data.Data.length > 0) {
                 const candles = json.Data.Data;
                 
-                // Clean the data exactly like your frontend did
+                // Clean the data to fix wick anomalies
                 const cleaned = candles.map(c => {
                     let safeLow = c.low;
                     let safeHigh = c.high;
@@ -47,51 +49,92 @@ async function fetchHistory() {
                 reachedEnd = true;
             }
         } catch (e) {
-            console.error("History fetch error:", e);
+            console.error("History fetch error, retrying next cycle:", e);
             reachedEnd = true;
         }
-        // Small pause to be nice to the API
-        await new Promise(r => setTimeout(r, 200)); 
+        // Increased pause to 1.5 seconds to bypass strict API rate limits
+        await new Promise(r => setTimeout(r, 1500)); 
     }
 
-    // Sort and save to cache
-    const uniqueMap = new Map();
-    allData.forEach(d => uniqueMap.set(d.time, d));
-    cachedHistory = Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
-    console.log("Historical Data Cached!");
+    if (allData.length > 0) {
+        const uniqueMap = new Map();
+        allData.forEach(d => uniqueMap.set(d.time, d));
+        cachedHistory = Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
+        console.log(`Historical Data Cached! Loaded ${cachedHistory.length} days of data.`);
+    }
 }
 
 // 2. Function to fetch Live Price
+// Removed Binance (blocks US IPs). Replaced with CoinCap, Kraken, and KuCoin.
 async function fetchLive() {
-    console.log("Fetching Live Price...");
     const endpoints = [
-        { url: 'https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT', parser: d => ({ price: parseFloat(d.lastPrice), change: parseFloat(d.priceChangePercent) }) },
-        { url: 'https://api.coincap.io/v2/assets/bitcoin', parser: d => ({ price: parseFloat(d.data.priceUsd), change: parseFloat(d.data.changePercent24Hr) }) },
-        { url: 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true', parser: d => ({ price: d.bitcoin.usd, change: d.bitcoin.usd_24h_change }) }
+        { 
+            // Primary: CoinCap
+            url: 'https://api.coincap.io/v2/assets/bitcoin', 
+            parser: async (res) => {
+                const json = await res.json();
+                return { price: parseFloat(json.data.priceUsd), change: parseFloat(json.data.changePercent24Hr) };
+            }
+        },
+        { 
+            // Secondary: Kraken
+            url: 'https://api.kraken.com/0/public/Ticker?pair=XBTUSD', 
+            parser: async (res) => {
+                const json = await res.json();
+                const pair = json.result.XXBTZUSD;
+                const currentPrice = parseFloat(pair.c[0]);
+                const openPrice = parseFloat(pair.o);
+                const change = ((currentPrice - openPrice) / openPrice) * 100;
+                return { price: currentPrice, change: change };
+            }
+        },
+        { 
+            // Tertiary: KuCoin
+            url: 'https://api.kucoin.com/api/v1/market/stats?symbol=BTC-USDT', 
+            parser: async (res) => {
+                const json = await res.json();
+                return { price: parseFloat(json.data.last), change: parseFloat(json.data.changeRate) * 100 };
+            }
+        }
     ];
 
     for (const endpoint of endpoints) {
         try {
-            const res = await fetch(endpoint.url);
+            // Added a 4-second timeout so a hanging API doesn't freeze your backend
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 4000);
+            
+            const res = await fetch(endpoint.url, { signal: controller.signal });
+            clearTimeout(timeoutId);
+
             if (!res.ok) continue;
-            const data = await res.json();
-            cachedLivePrice = endpoint.parser(data);
-            console.log("Live Price Cached:", cachedLivePrice.price);
-            return; // Success, exit the loop
+            
+            const data = await endpoint.parser(res);
+            if (data && data.price > 0) {
+                cachedLivePrice = data;
+                return; // Success, exit the loop
+            }
         } catch (e) {
-            console.log("Endpoint failed, trying next...");
+            console.log(`Live API fallback triggered... moving to next source.`);
         }
     }
 }
 
-// 3. Run fetches immediately, then set interval for every 30 minutes (1800000 milliseconds)
+// 3. Initialize & Set Timers
 fetchHistory();
 fetchLive();
-setInterval(fetchHistory, 1800000);
-setInterval(fetchLive, 1800000);
+
+// Daily historical data only changes once a day. Updating it every 12 hours saves API limits.
+setInterval(fetchHistory, 43200000);
+
+// The live price updates every 10 seconds so the frontend stays real-time
+setInterval(fetchLive, 10000);
 
 // 4. Create the API endpoints for your Wix site to call
 app.get('/api/history', (req, res) => {
+    if (cachedHistory.length === 0) {
+        return res.status(503).json({ error: "Historical data is still building cache, try again in a few seconds." });
+    }
     res.json(cachedHistory);
 });
 
@@ -102,5 +145,5 @@ app.get('/api/live', (req, res) => {
 // Start the server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Pulse Backend running on port ${PORT}`);
 });
