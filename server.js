@@ -128,7 +128,7 @@ fetchLive();
 setInterval(fetchHistory, 43200000);
 
 // The live price updates every 10 seconds so the frontend stays real-time
-setInterval(fetchLive, 10000);
+setInterval(fetchLive, 1000000);
 
 // 4. Create the API endpoints for your Wix site to call
 app.get('/api/history', (req, res) => {
