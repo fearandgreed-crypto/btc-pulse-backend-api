@@ -124,11 +124,11 @@ async function fetchLive() {
 fetchHistory();
 fetchLive();
 
-// Daily historical data only changes once a day. Updating it every 12 hours saves API limits.
-setInterval(fetchHistory, 43200000);
+// Update historical data every 30 minutes (1,800,000 ms)
+setInterval(fetchHistory, 1800000);
 
-// The live price updates every 10 seconds so the frontend stays real-time
-setInterval(fetchLive, 1000000);
+// Update live price every 30 minutes (1,800,000 ms)
+setInterval(fetchLive, 1800000);
 
 // 4. Create the API endpoints for your Wix site to call
 app.get('/api/history', (req, res) => {
