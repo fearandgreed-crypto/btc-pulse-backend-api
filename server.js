@@ -122,16 +122,16 @@ async function fetchWatchlist() {
 }
 
 // ==========================================
-// 4. INITIALIZE & SET TIMERS (30 Minutes)
+// 4. INITIALIZE & SET TIMERS (10 Minutes)
 // ==========================================
 fetchHistory();
 fetchLive();
 fetchWatchlist();
 
-// Exactly 30 minutes (1,800,000 ms) for everything
-setInterval(fetchHistory, 1800000);
-setInterval(fetchLive, 1800000);
-setInterval(fetchWatchlist, 1800000);
+// Staggered 10-minute loops to prevent CPU spikes
+setInterval(fetchLive, 600000);          // Fires exactly at 10m
+setInterval(fetchWatchlist, 601000);     // Fires 1 second later
+setInterval(fetchHistory, 605000);       // Fires 5 seconds later
 
 // ==========================================
 // 5. API ENDPOINTS FOR FRONTEND
