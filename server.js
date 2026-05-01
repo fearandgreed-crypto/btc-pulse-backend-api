@@ -101,7 +101,8 @@ async function fetchLive() {
 async function fetchWatchlist() {
     console.log("Fetching Watchlist...");
     try {
-        const res = await fetch('https://min-api.cryptocompare.com/data/top/mktcapfull?limit=25&tsym=USD');
+        // THE FIX: Pull 100 coins so we have plenty left over after filtering
+        const res = await fetch('https://min-api.cryptocompare.com/data/top/mktcapfull?limit=100&tsym=USD');
         const json = await res.json();
 
         if (json.Data) {
