@@ -123,34 +123,36 @@ async function fetchWatchlist() {
 }
 
 // ==========================================
-// 4. INITIALIZE & SET TIMERS (10 Minutes)
+// 4. INITIALIZE & CLOCK-SYNCED TIMERS
 // ==========================================
 fetchHistory();
 fetchLive();
 fetchWatchlist();
 
-// Staggered 10-minute loops to prevent CPU spikes
-setInterval(fetchLive, 600000);          // Fires exactly at 10m
-setInterval(fetchWatchlist, 601000);     // Fires 1 second later
-setInterval(fetchHistory, 605000);       // Fires 5 seconds later
+function startClockAlignedInterval() {
+    const now = new Date();
+    
+    // Calculate milliseconds until the next 10-minute boundary (e.g., XX:00, XX:10, XX:20)
+    // This guarantees it will fire EXACTLY on the hour (XX:00:00) when the crypto day resets
+    const msUntilNext10Min = (10 - (now.getMinutes() % 10)) * 60000 - (now.getSeconds() * 1000) - now.getMilliseconds();
+    
+    console.log(`⏳ Syncing to real-world clock... First automated loop will fire in ${Math.round(msUntilNext10Min / 1000)} seconds.`);
 
-// ==========================================
-// 5. API ENDPOINTS FOR FRONTEND
-// ==========================================
-app.get('/api/history', (req, res) => {
-    if (cachedHistory.length === 0) return res.status(503).json({ error: "Building cache, try again." });
-    res.json(cachedHistory);
-});
+    setTimeout(() => {
+        // 1. Fire immediately at the synchronized time
+        fetchLive();
+        setTimeout(fetchWatchlist, 1000); // 1 second stagger
+        setTimeout(fetchHistory, 5000);   // 5 second stagger
 
-app.get('/api/live', (req, res) => {
-    res.json(cachedLivePrice);
-});
+        // 2. Now that we are perfectly synced to the clock, start the permanent 10-minute loop
+        setInterval(() => {
+            fetchLive();
+            setTimeout(fetchWatchlist, 1000);
+            setTimeout(fetchHistory, 5000);
+        }, 600000); // 600,000 ms = 10 minutes
+        
+    }, msUntilNext10Min);
+}
 
-app.get('/api/watchlist', (req, res) => {
-    res.json(cachedWatchlist);
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Pulse Backend running on port ${PORT}`);
-});
+// Start the synchronized engine
+startClockAlignedInterval();
