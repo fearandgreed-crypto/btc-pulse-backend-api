@@ -64,14 +64,38 @@ async function fetchHistory() {
 }
 
 // ==========================================
-// 2. FETCH LIVE PRICE (CoinCap, Kraken, KuCoin)
+// 2. FETCH LIVE PRICE (Unified: CryptoCompare)
 // ==========================================
 async function fetchLive() {
     console.log("Fetching Live Price...");
+    
+    // We keep fallback endpoints just in case, but prioritize CryptoCompare to match your history!
     const endpoints = [
-        { url: 'https://api.coincap.io/v2/assets/bitcoin', parser: async (res) => { const json = await res.json(); return { price: parseFloat(json.data.priceUsd), change: parseFloat(json.data.changePercent24Hr) }; } },
-        { url: 'https://api.kraken.com/0/public/Ticker?pair=XBTUSD', parser: async (res) => { const json = await res.json(); const pair = json.result.XXBTZUSD; const currentPrice = parseFloat(pair.c[0]); const openPrice = parseFloat(pair.o); return { price: currentPrice, change: ((currentPrice - openPrice) / openPrice) * 100 }; } },
-        { url: 'https://api.kucoin.com/api/v1/market/stats?symbol=BTC-USDT', parser: async (res) => { const json = await res.json(); return { price: parseFloat(json.data.last), change: parseFloat(json.data.changeRate) * 100 }; } }
+        { 
+            // Primary: CryptoCompare (Matches your historical data perfectly)
+            url: 'https://min-api.cryptocompare.com/data/pricemultifull?fsyms=BTC&tsyms=USD', 
+            parser: async (res) => { 
+                const json = await res.json(); 
+                const data = json.RAW.BTC.USD;
+                return { price: parseFloat(data.PRICE), change: parseFloat(data.CHANGEPCT24HOUR) }; 
+            } 
+        },
+        { 
+            // Fallback 1: CoinCap
+            url: 'https://api.coincap.io/v2/assets/bitcoin', 
+            parser: async (res) => { 
+                const json = await res.json(); 
+                return { price: parseFloat(json.data.priceUsd), change: parseFloat(json.data.changePercent24Hr) }; 
+            } 
+        },
+        { 
+            // Fallback 2: KuCoin
+            url: 'https://api.kucoin.com/api/v1/market/stats?symbol=BTC-USDT', 
+            parser: async (res) => { 
+                const json = await res.json(); 
+                return { price: parseFloat(json.data.last), change: parseFloat(json.data.changeRate) * 100 }; 
+            } 
+        }
     ];
 
     for (const endpoint of endpoints) {
@@ -87,7 +111,7 @@ async function fetchLive() {
             if (data && data.price > 0) {
                 cachedLivePrice = data;
                 console.log("Live Price Cached:", cachedLivePrice.price);
-                return;
+                return; // Success! Exit the loop.
             }
         } catch (e) {
             console.log(`Live API fallback triggered...`);
