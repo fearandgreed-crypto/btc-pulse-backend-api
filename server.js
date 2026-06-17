@@ -64,14 +64,33 @@ async function fetchHistory() {
 }
 
 // ==========================================
-// 2. FETCH LIVE PRICE (CoinCap, Kraken, KuCoin)
+// 2. FETCH LIVE PRICE (Unified: CryptoCompare)
 // ==========================================
 async function fetchLive() {
     console.log("Fetching Live Price...");
     const endpoints = [
-        { url: 'https://api.coincap.io/v2/assets/bitcoin', parser: async (res) => { const json = await res.json(); return { price: parseFloat(json.data.priceUsd), change: parseFloat(json.data.changePercent24Hr) }; } },
-        { url: 'https://api.kraken.com/0/public/Ticker?pair=XBTUSD', parser: async (res) => { const json = await res.json(); const pair = json.result.XXBTZUSD; const currentPrice = parseFloat(pair.c[0]); const openPrice = parseFloat(pair.o); return { price: currentPrice, change: ((currentPrice - openPrice) / openPrice) * 100 }; } },
-        { url: 'https://api.kucoin.com/api/v1/market/stats?symbol=BTC-USDT', parser: async (res) => { const json = await res.json(); return { price: parseFloat(json.data.last), change: parseFloat(json.data.changeRate) * 100 }; } }
+        { 
+            url: 'https://min-api.cryptocompare.com/data/pricemultifull?fsyms=BTC&tsyms=USD', 
+            parser: async (res) => { 
+                const json = await res.json(); 
+                const data = json.RAW.BTC.USD;
+                return { price: parseFloat(data.PRICE), change: parseFloat(data.CHANGEPCT24HOUR) }; 
+            } 
+        },
+        { 
+            url: 'https://api.coincap.io/v2/assets/bitcoin', 
+            parser: async (res) => { 
+                const json = await res.json(); 
+                return { price: parseFloat(json.data.priceUsd), change: parseFloat(json.data.changePercent24Hr) }; 
+            } 
+        },
+        { 
+            url: 'https://api.kucoin.com/api/v1/market/stats?symbol=BTC-USDT', 
+            parser: async (res) => { 
+                const json = await res.json(); 
+                return { price: parseFloat(json.data.last), change: parseFloat(json.data.changeRate) * 100 }; 
+            } 
+        }
     ];
 
     for (const endpoint of endpoints) {
@@ -101,7 +120,6 @@ async function fetchLive() {
 async function fetchWatchlist() {
     console.log("Fetching Watchlist...");
     try {
-        // THE FIX: Pull 100 coins so we have plenty left over after filtering
         const res = await fetch('https://min-api.cryptocompare.com/data/top/mktcapfull?limit=100&tsym=USD');
         const json = await res.json();
 
@@ -130,9 +148,9 @@ fetchLive();
 fetchWatchlist();
 
 // Staggered 10-minute loops to prevent CPU spikes
-setInterval(fetchLive, 600000);          // Fires exactly at 10m
-setInterval(fetchWatchlist, 601000);     // Fires 1 second later
-setInterval(fetchHistory, 605000);       // Fires 5 seconds later
+setInterval(fetchLive, 600000);          
+setInterval(fetchWatchlist, 601000);      
+setInterval(fetchHistory, 605000);        
 
 // ==========================================
 // 5. API ENDPOINTS FOR FRONTEND
