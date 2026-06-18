@@ -19,16 +19,13 @@ async function fetchHistory() {
     let currentToTs = Math.floor(Date.now() / 1000);
     const targetStartTs = Math.floor(new Date('2013-01-01').getTime() / 1000);
     let reachedEnd = false;
-    let retryCount = 0; // Tracks how many times we get blocked
 
     while (!reachedEnd) {
         const url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=BTC&tsym=USD&limit=2000&toTs=${currentToTs}`;
-        
         try {
             const res = await fetch(url);
             const json = await res.json();
 
-            // If the API gives us data successfully
             if (json.Response === 'Success' && json.Data && json.Data.Data.length > 0) {
                 const candles = json.Data.Data;
                 
@@ -47,28 +44,14 @@ async function fetchHistory() {
                     reachedEnd = true;
                 } else {
                     currentToTs = earliestInBatch - 86400;
-                    retryCount = 0; // Reset retries on success
                 }
-            } 
-            // If the API blocks us for going too fast
-            else {
-                console.log(`API blocked us (Rate Limit). Waiting 10 seconds... (${json.Message || 'No message'})`);
-                retryCount++;
-                
-                if (retryCount > 10) {
-                    console.error("Max retries hit. Giving up.");
-                    reachedEnd = true;
-                } else {
-                    await new Promise(r => setTimeout(r, 10000)); // Wait 10 seconds to cool down
-                    continue; // Try the exact same request again
-                }
+            } else {
+                reachedEnd = true;
             }
         } catch (e) {
-            console.error("History fetch error:", e.message);
-            await new Promise(r => setTimeout(r, 5000));
+            console.error("History fetch error:", e);
+            reachedEnd = true;
         }
-        
-        // Wait 1.5 seconds between normal requests to be polite to the API
         await new Promise(r => setTimeout(r, 1500)); 
     }
 
@@ -79,39 +62,36 @@ async function fetchHistory() {
         console.log(`Historical Data Cached! Loaded ${cachedHistory.length} days of data.`);
     }
 }
+
 // ==========================================
-// 2. FETCH LIVE PRICE (CryptoCompare)
+// 2. FETCH LIVE PRICE (CoinCap, Kraken, KuCoin)
 // ==========================================
 async function fetchLive() {
     console.log("Fetching Live Price...");
-    
-    try {
-        // Set a 4-second timeout so it doesn't hang your server
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 4000);
-        
-        const url = 'https://min-api.cryptocompare.com/data/pricemultifull?fsyms=BTC&tsyms=USD';
-        const res = await fetch(url, { signal: controller.signal });
-        clearTimeout(timeoutId);
+    const endpoints = [
+        { url: 'https://api.coincap.io/v2/assets/bitcoin', parser: async (res) => { const json = await res.json(); return { price: parseFloat(json.data.priceUsd), change: parseFloat(json.data.changePercent24Hr) }; } },
+        { url: 'https://api.kraken.com/0/public/Ticker?pair=XBTUSD', parser: async (res) => { const json = await res.json(); const pair = json.result.XXBTZUSD; const currentPrice = parseFloat(pair.c[0]); const openPrice = parseFloat(pair.o); return { price: currentPrice, change: ((currentPrice - openPrice) / openPrice) * 100 }; } },
+        { url: 'https://api.kucoin.com/api/v1/market/stats?symbol=BTC-USDT', parser: async (res) => { const json = await res.json(); return { price: parseFloat(json.data.last), change: parseFloat(json.data.changeRate) * 100 }; } }
+    ];
 
-        if (!res.ok) {
-            throw new Error(`HTTP error! status: ${res.status}`);
-        }
-        
-        const json = await res.json();
-        const data = json.RAW.BTC.USD;
+    for (const endpoint of endpoints) {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 4000);
+            const res = await fetch(endpoint.url, { signal: controller.signal });
+            clearTimeout(timeoutId);
 
-        // Ensure the data is valid before updating the cache
-        if (data && data.PRICE > 0) {
-            cachedLivePrice = { 
-                price: parseFloat(data.PRICE), 
-                change: parseFloat(data.CHANGEPCT24HOUR) 
-            };
-            console.log("Live Price Cached:", cachedLivePrice.price);
+            if (!res.ok) continue;
+            
+            const data = await endpoint.parser(res);
+            if (data && data.price > 0) {
+                cachedLivePrice = data;
+                console.log("Live Price Cached:", cachedLivePrice.price);
+                return;
+            }
+        } catch (e) {
+            console.log(`Live API fallback triggered...`);
         }
-        
-    } catch (e) {
-        console.error("Failed to fetch live price:", e.message);
     }
 }
 
@@ -121,6 +101,7 @@ async function fetchLive() {
 async function fetchWatchlist() {
     console.log("Fetching Watchlist...");
     try {
+        // THE FIX: Pull 100 coins so we have plenty left over after filtering
         const res = await fetch('https://min-api.cryptocompare.com/data/top/mktcapfull?limit=100&tsym=USD');
         const json = await res.json();
 
@@ -149,9 +130,9 @@ fetchLive();
 fetchWatchlist();
 
 // Staggered 10-minute loops to prevent CPU spikes
-setInterval(fetchLive, 600000);         
-setInterval(fetchWatchlist, 601000);      
-setInterval(fetchHistory, 605000);
+setInterval(fetchLive, 600000);          // Fires exactly at 10m
+setInterval(fetchWatchlist, 601000);     // Fires 1 second later
+setInterval(fetchHistory, 605000);       // Fires 5 seconds later
 
 // ==========================================
 // 5. API ENDPOINTS FOR FRONTEND
