@@ -64,53 +64,38 @@ async function fetchHistory() {
 }
 
 // ==========================================
-// 2. FETCH LIVE PRICE (Unified: CryptoCompare)
+// 2. FETCH LIVE PRICE (CryptoCompare)
 // ==========================================
 async function fetchLive() {
     console.log("Fetching Live Price...");
-    const endpoints = [
-        { 
-            url: 'https://min-api.cryptocompare.com/data/pricemultifull?fsyms=BTC&tsyms=USD', 
-            parser: async (res) => { 
-                const json = await res.json(); 
-                const data = json.RAW.BTC.USD;
-                return { price: parseFloat(data.PRICE), change: parseFloat(data.CHANGEPCT24HOUR) }; 
-            } 
-        },
-        { 
-            url: 'https://api.coincap.io/v2/assets/bitcoin', 
-            parser: async (res) => { 
-                const json = await res.json(); 
-                return { price: parseFloat(json.data.priceUsd), change: parseFloat(json.data.changePercent24Hr) }; 
-            } 
-        },
-        { 
-            url: 'https://api.kucoin.com/api/v1/market/stats?symbol=BTC-USDT', 
-            parser: async (res) => { 
-                const json = await res.json(); 
-                return { price: parseFloat(json.data.last), change: parseFloat(json.data.changeRate) * 100 }; 
-            } 
-        }
-    ];
+    
+    try {
+        // Set a 4-second timeout so it doesn't hang your server
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        
+        const url = 'https://min-api.cryptocompare.com/data/pricemultifull?fsyms=BTC&tsyms=USD';
+        const res = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
 
-    for (const endpoint of endpoints) {
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 4000);
-            const res = await fetch(endpoint.url, { signal: controller.signal });
-            clearTimeout(timeoutId);
-
-            if (!res.ok) continue;
-            
-            const data = await endpoint.parser(res);
-            if (data && data.price > 0) {
-                cachedLivePrice = data;
-                console.log("Live Price Cached:", cachedLivePrice.price);
-                return;
-            }
-        } catch (e) {
-            console.log(`Live API fallback triggered...`);
+        if (!res.ok) {
+            throw new Error(`HTTP error! status: ${res.status}`);
         }
+        
+        const json = await res.json();
+        const data = json.RAW.BTC.USD;
+
+        // Ensure the data is valid before updating the cache
+        if (data && data.PRICE > 0) {
+            cachedLivePrice = { 
+                price: parseFloat(data.PRICE), 
+                change: parseFloat(data.CHANGEPCT24HOUR) 
+            };
+            console.log("Live Price Cached:", cachedLivePrice.price);
+        }
+        
+    } catch (e) {
+        console.error("Failed to fetch live price:", e.message);
     }
 }
 
