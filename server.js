@@ -95,32 +95,7 @@ async function fetchLive() {
     }
 }
 
-// ==========================================
-// 3. FETCH WATCHLIST (CryptoCompare)
-// ==========================================
-async function fetchWatchlist() {
-    console.log("Fetching Watchlist...");
-    try {
-        // THE FIX: Pull 100 coins so we have plenty left over after filtering
-        const res = await fetch('https://min-api.cryptocompare.com/data/top/mktcapfull?limit=100&tsym=USD');
-        const json = await res.json();
 
-        if (json.Data) {
-            cachedWatchlist = json.Data.map(item => {
-                return {
-                    symbol: item.CoinInfo?.Name || "UNK",
-                    price: item.RAW?.USD?.PRICE || 0,
-                    change: item.RAW?.USD?.CHANGEPCT24HOUR || 0,
-                    marketCap: item.RAW?.USD?.MKTCAP || 0,
-                    logo: item.CoinInfo?.ImageUrl ? `https://www.cryptocompare.com${item.CoinInfo.ImageUrl}` : ''
-                };
-            }).filter(c => c.price > 0);
-            console.log("Watchlist Cached!");
-        }
-    } catch(e) {
-        console.log("Watchlist API failed.");
-    }
-}
 
 // ==========================================
 // 4. INITIALIZE & SET TIMERS (10 Minutes)
