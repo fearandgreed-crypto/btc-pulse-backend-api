@@ -19,13 +19,16 @@ async function fetchHistory() {
     let currentToTs = Math.floor(Date.now() / 1000);
     const targetStartTs = Math.floor(new Date('2013-01-01').getTime() / 1000);
     let reachedEnd = false;
+    let retryCount = 0; // Tracks how many times we get blocked
 
     while (!reachedEnd) {
         const url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=BTC&tsym=USD&limit=2000&toTs=${currentToTs}`;
+        
         try {
             const res = await fetch(url);
             const json = await res.json();
 
+            // If the API gives us data successfully
             if (json.Response === 'Success' && json.Data && json.Data.Data.length > 0) {
                 const candles = json.Data.Data;
                 
@@ -44,14 +47,28 @@ async function fetchHistory() {
                     reachedEnd = true;
                 } else {
                     currentToTs = earliestInBatch - 86400;
+                    retryCount = 0; // Reset retries on success
                 }
-            } else {
-                reachedEnd = true;
+            } 
+            // If the API blocks us for going too fast
+            else {
+                console.log(`API blocked us (Rate Limit). Waiting 10 seconds... (${json.Message || 'No message'})`);
+                retryCount++;
+                
+                if (retryCount > 10) {
+                    console.error("Max retries hit. Giving up.");
+                    reachedEnd = true;
+                } else {
+                    await new Promise(r => setTimeout(r, 10000)); // Wait 10 seconds to cool down
+                    continue; // Try the exact same request again
+                }
             }
         } catch (e) {
-            console.error("History fetch error:", e);
-            reachedEnd = true;
+            console.error("History fetch error:", e.message);
+            await new Promise(r => setTimeout(r, 5000));
         }
+        
+        // Wait 1.5 seconds between normal requests to be polite to the API
         await new Promise(r => setTimeout(r, 1500)); 
     }
 
@@ -62,7 +79,6 @@ async function fetchHistory() {
         console.log(`Historical Data Cached! Loaded ${cachedHistory.length} days of data.`);
     }
 }
-
 // ==========================================
 // 2. FETCH LIVE PRICE (CryptoCompare)
 // ==========================================
