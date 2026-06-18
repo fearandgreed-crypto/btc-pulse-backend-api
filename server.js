@@ -149,9 +149,9 @@ fetchLive();
 fetchWatchlist();
 
 // Staggered 10-minute loops to prevent CPU spikes
-setInterval(fetchLive, 60000);          
-setInterval(fetchWatchlist, 60100);      
-setInterval(fetchHistory, 60500);        
+setInterval(fetchLive, 600000);         
+setInterval(fetchWatchlist, 601000);      
+setInterval(fetchHistory, 605000);
 
 // ==========================================
 // 5. API ENDPOINTS FOR FRONTEND
