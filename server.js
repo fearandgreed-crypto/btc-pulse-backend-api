@@ -11,39 +11,55 @@ let cachedLivePrice = { price: 0, change: 0 };
 let cachedWatchlist = [];
 
 // ==========================================
-// 1. FETCH HISTORICAL DATA (CryptoCompare)
+// 1. FETCH HISTORICAL DATA (Binance API)
 // ==========================================
 async function fetchHistory() {
-    console.log("Fetching Historical Data...");
+    console.log("Fetching Historical Data from Binance...");
     let allData = [];
-    let currentToTs = Math.floor(Date.now() / 1000);
-    const targetStartTs = Math.floor(new Date('2013-01-01').getTime() / 1000);
+    
+    // Binance uses milliseconds for its timestamps
+    let currentEndTime = Date.now();
+    const targetStartTs = new Date('2013-01-01').getTime();
     let reachedEnd = false;
 
     while (!reachedEnd) {
-        const url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=BTC&tsym=USD&limit=2000&toTs=${currentToTs}`;
+        // New API Address: Binance klines
+        const url = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000&endTime=${currentEndTime}`;
+        
         try {
             const res = await fetch(url);
-            const json = await res.json();
+            const candles = await res.json();
 
-            if (json.Response === 'Success' && json.Data && json.Data.Data.length > 0) {
-                const candles = json.Data.Data;
-                
+            if (Array.isArray(candles) && candles.length > 0) {
                 const cleaned = candles.map(c => {
-                    let safeLow = c.low;
-                    let safeHigh = c.high;
-                    if (c.close > 10 && safeLow < c.close * 0.2) safeLow = c.open > c.close ? c.close * 0.9 : c.open * 0.9;
-                    if (c.close > 10 && safeHigh > c.close * 3) safeHigh = c.open > c.close ? c.open * 1.1 : c.close * 1.1;
-                    return { time: c.time * 1000, open: c.open, high: safeHigh, low: safeLow, close: c.close, volume: c.volumeto };
+                    // Binance returns an array: [time, open, high, low, close, volume, ...]
+                    let time = c[0]; 
+                    let open = parseFloat(c[1]);
+                    let high = parseFloat(c[2]);
+                    let low = parseFloat(c[3]);
+                    let close = parseFloat(c[4]);
+                    let volume = parseFloat(c[5]);
+
+                    let safeLow = low;
+                    let safeHigh = high;
+                    
+                    // Your existing spike/flash-crash protection logic
+                    if (close > 10 && safeLow < close * 0.2) safeLow = open > close ? close * 0.9 : open * 0.9;
+                    if (close > 10 && safeHigh > close * 3) safeHigh = open > close ? open * 1.1 : close * 1.1;
+
+                    return { time, open, high: safeHigh, low: safeLow, close, volume };
                 });
 
                 allData.push(...cleaned);
-                const earliestInBatch = candles[0].time;
+                
+                // The earliest candle in this batch (index 0)
+                const earliestInBatch = candles[0][0];
 
-                if (earliestInBatch <= targetStartTs || candles.length < 2000) {
+                if (earliestInBatch <= targetStartTs || candles.length < 1000) {
                     reachedEnd = true;
                 } else {
-                    currentToTs = earliestInBatch - 86400;
+                    // Step back 1 millisecond from the earliest candle for the next batch
+                    currentEndTime = earliestInBatch - 1; 
                 }
             } else {
                 reachedEnd = true;
@@ -52,7 +68,9 @@ async function fetchHistory() {
             console.error("History fetch error:", e);
             reachedEnd = true;
         }
-        await new Promise(r => setTimeout(r, 1500)); 
+        
+        // Wait 500ms between requests to avoid rate limits
+        await new Promise(r => setTimeout(r, 500)); 
     }
 
     if (allData.length > 0) {
@@ -62,7 +80,6 @@ async function fetchHistory() {
         console.log(`Historical Data Cached! Loaded ${cachedHistory.length} days of data.`);
     }
 }
-
 // ==========================================
 // 2. FETCH LIVE PRICE (CoinCap, Kraken, KuCoin)
 // ==========================================
