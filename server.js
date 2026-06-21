@@ -5,72 +5,61 @@ const app = express();
 // Enable CORS so your Wix site is allowed to talk to this server
 app.use(cors());
 
+// ==========================================
+// --- PASTE YOUR API KEY HERE ---
+// ==========================================
+const API_KEY = "PASTE_YOUR_COINDESK_API_KEY_HERE";
+
 // Variables to hold our saved data
 let cachedHistory = [];
 let cachedLivePrice = { price: 0, change: 0 };
 let cachedWatchlist = [];
 
 // ==========================================
-// 1. FETCH HISTORICAL DATA (Binance API)
+// 1. FETCH HISTORICAL DATA (CryptoCompare / CCData)
 // ==========================================
 async function fetchHistory() {
-    console.log("Fetching Historical Data from Binance...");
+    console.log("Fetching Historical Data...");
     let allData = [];
-    
-    // Binance uses milliseconds for its timestamps
-    let currentEndTime = Date.now();
-    const targetStartTs = new Date('2013-01-01').getTime();
+    let currentToTs = Math.floor(Date.now() / 1000);
+    const targetStartTs = Math.floor(new Date('2013-01-01').getTime() / 1000);
     let reachedEnd = false;
 
     while (!reachedEnd) {
-        // New API Address: Binance klines
-        const url = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=1000&endTime=${currentEndTime}`;
-        
+        // API Key appended to the URL to bypass rate limits
+        const url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=BTC&tsym=USD&limit=2000&toTs=${currentToTs}&api_key=${API_KEY}`;
         try {
             const res = await fetch(url);
-            const candles = await res.json();
+            const json = await res.json();
 
-            if (Array.isArray(candles) && candles.length > 0) {
+            if (json.Response === 'Success' && json.Data && json.Data.Data.length > 0) {
+                const candles = json.Data.Data;
+                
                 const cleaned = candles.map(c => {
-                    // Binance returns an array: [time, open, high, low, close, volume, ...]
-                    let time = c[0]; 
-                    let open = parseFloat(c[1]);
-                    let high = parseFloat(c[2]);
-                    let low = parseFloat(c[3]);
-                    let close = parseFloat(c[4]);
-                    let volume = parseFloat(c[5]);
-
-                    let safeLow = low;
-                    let safeHigh = high;
-                    
-                    // Your existing spike/flash-crash protection logic
-                    if (close > 10 && safeLow < close * 0.2) safeLow = open > close ? close * 0.9 : open * 0.9;
-                    if (close > 10 && safeHigh > close * 3) safeHigh = open > close ? open * 1.1 : close * 1.1;
-
-                    return { time, open, high: safeHigh, low: safeLow, close, volume };
+                    let safeLow = c.low;
+                    let safeHigh = c.high;
+                    if (c.close > 10 && safeLow < c.close * 0.2) safeLow = c.open > c.close ? c.close * 0.9 : c.open * 0.9;
+                    if (c.close > 10 && safeHigh > c.close * 3) safeHigh = c.open > c.close ? c.open * 1.1 : c.close * 1.1;
+                    return { time: c.time * 1000, open: c.open, high: safeHigh, low: safeLow, close: c.close, volume: c.volumeto };
                 });
 
                 allData.push(...cleaned);
-                
-                // The earliest candle in this batch (index 0)
-                const earliestInBatch = candles[0][0];
+                const earliestInBatch = candles[0].time;
 
-                if (earliestInBatch <= targetStartTs || candles.length < 1000) {
+                if (earliestInBatch <= targetStartTs || candles.length < 2000) {
                     reachedEnd = true;
                 } else {
-                    // Step back 1 millisecond from the earliest candle for the next batch
-                    currentEndTime = earliestInBatch - 1; 
+                    currentToTs = earliestInBatch - 86400;
                 }
             } else {
+                console.error("API Error or Limit Reached:", json.Message);
                 reachedEnd = true;
             }
         } catch (e) {
             console.error("History fetch error:", e);
             reachedEnd = true;
         }
-        
-        // Wait 500ms between requests to avoid rate limits
-        await new Promise(r => setTimeout(r, 500)); 
+        await new Promise(r => setTimeout(r, 1500)); 
     }
 
     if (allData.length > 0) {
@@ -80,6 +69,7 @@ async function fetchHistory() {
         console.log(`Historical Data Cached! Loaded ${cachedHistory.length} days of data.`);
     }
 }
+
 // ==========================================
 // 2. FETCH LIVE PRICE (CoinCap, Kraken, KuCoin)
 // ==========================================
@@ -113,13 +103,14 @@ async function fetchLive() {
 }
 
 // ==========================================
-// 3. FETCH WATCHLIST (CryptoCompare)
+// 3. FETCH WATCHLIST (CryptoCompare / CCData)
 // ==========================================
 async function fetchWatchlist() {
     console.log("Fetching Watchlist...");
     try {
-        // THE FIX: Pull 100 coins so we have plenty left over after filtering
-        const res = await fetch('https://min-api.cryptocompare.com/data/top/mktcapfull?limit=100&tsym=USD');
+        // API Key appended to the URL to bypass rate limits
+        const url = `https://min-api.cryptocompare.com/data/top/mktcapfull?limit=100&tsym=USD&api_key=${API_KEY}`;
+        const res = await fetch(url);
         const json = await res.json();
 
         if (json.Data) {
@@ -133,9 +124,11 @@ async function fetchWatchlist() {
                 };
             }).filter(c => c.price > 0);
             console.log("Watchlist Cached!");
+        } else if (json.Message) {
+            console.error("Watchlist API Error:", json.Message);
         }
     } catch(e) {
-        console.log("Watchlist API failed.");
+        console.log("Watchlist API failed.", e);
     }
 }
 
