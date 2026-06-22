@@ -1,23 +1,9 @@
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs'); // <--- Required to read our local 2010-2014 data file
 const app = express();
  
 // Enable CORS so your Wix site is allowed to talk to this server
 app.use(cors());
-
-// ==========================================
-// SECURITY: THE SECRET HANDSHAKE
-// ==========================================
-// This bounces any hacker trying to drain your Railway server
-app.use((req, res, next) => {
-    const clientKey = req.headers['x-terminal-key'];
-    // You must update your Wix fetch calls to send this exact password!
-    if (clientKey !== 'PULSE_LABS_SECURE_KEY_998877') {
-        return res.status(401).json({ error: 'Unauthorized: Handshake Failed' });
-    }
-    next(); 
-});
  
 // Variables to hold our saved data
 let cachedHistory = [];
@@ -25,48 +11,29 @@ let cachedLivePrice = { price: 0, change: 0 };
 let cachedWatchlist = [];
  
 // ==========================================
-// 1. FETCH HISTORICAL DATA (The "Mother Option" Stitch)
+// 1. FETCH HISTORICAL DATA (Bitfinex - Free, 10+ Years in 1 Call)
 // ==========================================
 async function fetchHistory() {
    console.log("Fetching Historical Data...");
    try {
-       // A. Load the immutable 2010 - Sept 2014 history from your local file
-       let earlyData = [];
-       try {
-           const fileData = fs.readFileSync('./early-btc.json', 'utf8');
-           earlyData = JSON.parse(fileData);
-       } catch (err) {
-           console.log("Warning: early-btc.json file not found, defaulting to 2014 Yahoo start.");
-       }
-
-       // B. Fetch the live Sept 2014 - Present data from Yahoo Finance
-       const url = 'https://query1.finance.yahoo.com/v8/finance/chart/BTC-USD?interval=1d&range=max';
+       const url = 'https://api-pub.bitfinex.com/v2/candles/trade:1D:tBTCUSD/hist?limit=10000&sort=1';
        const res = await fetch(url);
        const json = await res.json();
        
-       if (json.chart && json.chart.result && json.chart.result.length > 0) {
-           const data = json.chart.result[0];
-           const timestamps = data.timestamp;
-           const quote = data.indicators.quote[0];
+       if (Array.isArray(json) && json.length > 0) {
+           const allData = json.map(candle => {
+               return {
+                   time: candle[0],     // MTS
+                   open: candle[1],
+                   high: candle[3],
+                   low: candle[4],
+                   close: candle[2],
+                   volume: candle[5]
+               };
+           });
            
-           const yahooData = [];
-           for (let i = 0; i < timestamps.length; i++) {
-               // Yahoo sometimes returns nulls for market glitches; skip those
-               if (quote.close[i] !== null) {
-                   yahooData.push({
-                       time: timestamps[i] * 1000, 
-                       open: quote.open[i],
-                       high: quote.high[i],
-                       low: quote.low[i],
-                       close: quote.close[i],
-                       volume: quote.volume[i]
-                   });
-               }
-           }
-           
-           // C. STITCH THEM TOGETHER: Early Data first, then Yahoo Data
-           cachedHistory = [...earlyData, ...yahooData];
-           console.log(`Historical Data Cached! Loaded ${cachedHistory.length} total days of data.`);
+           cachedHistory = allData;
+           console.log(`Historical Data Cached! Loaded ${cachedHistory.length} days of data.`);
        }
    } catch (e) {
        console.error("History fetch error:", e);
@@ -106,7 +73,7 @@ async function fetchLive() {
 }
  
 // ==========================================
-// 3. FETCH WATCHLIST (CoinCap)
+// 3. FETCH WATCHLIST (CoinCap - Free, No API Key needed)
 // ==========================================
 async function fetchWatchlist() {
    console.log("Fetching Watchlist...");
@@ -132,16 +99,15 @@ async function fetchWatchlist() {
 }
  
 // ==========================================
-// 4. INITIALIZE & SET TIMERS (Optimized to prevent bans)
+// 4. INITIALIZE & SET TIMERS (10 Minutes)
 // ==========================================
 fetchHistory();
 fetchLive();
 fetchWatchlist();
  
-// Live price needs to be fast, history only needs to run once a day
-setInterval(fetchLive, 60000);           // Live Ticker: Every 1 Minute
-setInterval(fetchWatchlist, 300000);     // Watchlist: Every 5 Minutes
-setInterval(fetchHistory, 86400000);     // Chart History: Every 24 Hours
+setInterval(fetchLive, 600000);          // Fires exactly at 10m
+setInterval(fetchWatchlist, 601000);     // Fires 1 second later
+setInterval(fetchHistory, 605000);       // Fires 5 seconds later
  
 // ==========================================
 // 5. API ENDPOINTS FOR FRONTEND
