@@ -1,9 +1,23 @@
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs'); // <--- Required to read our local 2010-2014 data file
 const app = express();
  
 // Enable CORS so your Wix site is allowed to talk to this server
 app.use(cors());
+
+// ==========================================
+// SECURITY: THE SECRET HANDSHAKE
+// ==========================================
+// This bounces any hacker trying to drain your Railway server
+app.use((req, res, next) => {
+    const clientKey = req.headers['x-terminal-key'];
+    // You must update your Wix fetch calls to send this exact password!
+    if (clientKey !== 'PULSE_LABS_SECURE_KEY_998877') {
+        return res.status(401).json({ error: 'Unauthorized: Handshake Failed' });
+    }
+    next(); 
+});
  
 // Variables to hold our saved data
 let cachedHistory = [];
@@ -11,12 +25,21 @@ let cachedLivePrice = { price: 0, change: 0 };
 let cachedWatchlist = [];
  
 // ==========================================
-// 1. FETCH HISTORICAL DATA (Yahoo Finance - Free, 10+ Years in 1 Call)
+// 1. FETCH HISTORICAL DATA (The "Mother Option" Stitch)
 // ==========================================
 async function fetchHistory() {
    console.log("Fetching Historical Data...");
    try {
-       // Yahoo Finance provides full OHLC history back to 2014 in a single request
+       // A. Load the immutable 2010 - Sept 2014 history from your local file
+       let earlyData = [];
+       try {
+           const fileData = fs.readFileSync('./early-btc.json', 'utf8');
+           earlyData = JSON.parse(fileData);
+       } catch (err) {
+           console.log("Warning: early-btc.json file not found, defaulting to 2014 Yahoo start.");
+       }
+
+       // B. Fetch the live Sept 2014 - Present data from Yahoo Finance
        const url = 'https://query1.finance.yahoo.com/v8/finance/chart/BTC-USD?interval=1d&range=max';
        const res = await fetch(url);
        const json = await res.json();
@@ -26,12 +49,12 @@ async function fetchHistory() {
            const timestamps = data.timestamp;
            const quote = data.indicators.quote[0];
            
-           const allData = [];
+           const yahooData = [];
            for (let i = 0; i < timestamps.length; i++) {
                // Yahoo sometimes returns nulls for market glitches; skip those
                if (quote.close[i] !== null) {
-                   allData.push({
-                       time: timestamps[i] * 1000, // Convert to milliseconds
+                   yahooData.push({
+                       time: timestamps[i] * 1000, 
                        open: quote.open[i],
                        high: quote.high[i],
                        low: quote.low[i],
@@ -41,8 +64,9 @@ async function fetchHistory() {
                }
            }
            
-           cachedHistory = allData;
-           console.log(`Historical Data Cached! Loaded ${cachedHistory.length} days of data.`);
+           // C. STITCH THEM TOGETHER: Early Data first, then Yahoo Data
+           cachedHistory = [...earlyData, ...yahooData];
+           console.log(`Historical Data Cached! Loaded ${cachedHistory.length} total days of data.`);
        }
    } catch (e) {
        console.error("History fetch error:", e);
@@ -82,12 +106,11 @@ async function fetchLive() {
 }
  
 // ==========================================
-// 3. FETCH WATCHLIST (CoinCap - Free, No API Key needed)
+// 3. FETCH WATCHLIST (CoinCap)
 // ==========================================
 async function fetchWatchlist() {
    console.log("Fetching Watchlist...");
    try {
-       // CoinCap's /assets endpoint gives the top 100 coins automatically
        const res = await fetch('https://api.coincap.io/v2/assets?limit=100');
        const json = await res.json();
 
@@ -98,7 +121,6 @@ async function fetchWatchlist() {
                    price: parseFloat(item.priceUsd) || 0,
                    change: parseFloat(item.changePercent24Hr) || 0,
                    marketCap: parseFloat(item.marketCapUsd) || 0,
-                   // Constructing CoinCap's official icon URLs dynamically
                    logo: `https://assets.coincap.io/assets/icons/${item.symbol.toLowerCase()}@2x.png`
                };
            }).filter(c => c.price > 0);
@@ -110,16 +132,16 @@ async function fetchWatchlist() {
 }
  
 // ==========================================
-// 4. INITIALIZE & SET TIMERS (10 Minutes)
+// 4. INITIALIZE & SET TIMERS (Optimized to prevent bans)
 // ==========================================
 fetchHistory();
 fetchLive();
 fetchWatchlist();
  
-// Staggered 10-minute loops to prevent CPU spikes
-setInterval(fetchLive, 600000);          // Fires exactly at 10m
-setInterval(fetchWatchlist, 601000);     // Fires 1 second later
-setInterval(fetchHistory, 605000);       // Fires 5 seconds later
+// Live price needs to be fast, history only needs to run once a day
+setInterval(fetchLive, 60000);           // Live Ticker: Every 1 Minute
+setInterval(fetchWatchlist, 300000);     // Watchlist: Every 5 Minutes
+setInterval(fetchHistory, 86400000);     // Chart History: Every 24 Hours
  
 // ==========================================
 // 5. API ENDPOINTS FOR FRONTEND
