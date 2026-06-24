@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs'); // Built-in Node module for reading files
 const app = express();
  
 // Enable CORS so your Wix site is allowed to talk to this server
@@ -11,7 +12,52 @@ let cachedLivePrice = { price: 0, change: 0 };
 let cachedWatchlist = [];
  
 // ==========================================
-// 1. FETCH HISTORICAL DATA (Bitfinex - Free, 10+ Years in 1 Call)
+// 0. LOAD PRE-2013 DATA FROM CSV (Mt. Gox Era)
+// ==========================================
+function loadEarlyData() {
+    console.log("Loading early historical data from CSV...");
+    const earlyData = [];
+    try {
+        // Read the CSV file from your local folder
+        const csv = fs.readFileSync('./bitcoin_2010-07-17_2024-05-23.csv', 'utf8');
+        
+        // Split the file into rows and skip the first row (the header)
+        const lines = csv.split('\n').slice(1); 
+        
+        // Bitfinex data starts April 1, 2013. We ignore any CSV rows after March 31, 2013.
+        const cutoffDate = new Date('2013-04-01').getTime();
+        
+        for (let line of lines) {
+            if (!line.trim()) continue; // Skip empty lines
+            
+            const [startStr, endStr, open, high, low, close, volume] = line.split(',');
+            const rowTime = new Date(startStr).getTime();
+            
+            // Automatically ignore CSV data that overlaps with Bitfinex
+            if (rowTime >= cutoffDate) continue;
+            
+            earlyData.push({
+                time: rowTime, 
+                open: parseFloat(open),
+                high: parseFloat(high),
+                low: parseFloat(low),
+                close: parseFloat(close),
+                volume: parseFloat(volume) || 0
+            });
+        }
+        console.log(`Successfully loaded ${earlyData.length} days of early history.`);
+        return earlyData;
+    } catch (e) {
+        console.error("Could not find or parse CSV! Ensure it is in the same folder.", e.message);
+        return []; 
+    }
+}
+
+// Store it in memory once on server startup
+const manualEarlyData = loadEarlyData();
+
+// ==========================================
+// 1. FETCH HISTORICAL DATA (Bitfinex + CSV Stitching)
 // ==========================================
 async function fetchHistory() {
    console.log("Fetching Historical Data...");
@@ -21,7 +67,7 @@ async function fetchHistory() {
        const json = await res.json();
        
        if (Array.isArray(json) && json.length > 0) {
-           const allData = json.map(candle => {
+           const bitfinexData = json.map(candle => {
                return {
                    time: candle[0],     // MTS
                    open: candle[1],
@@ -32,8 +78,14 @@ async function fetchHistory() {
                };
            });
            
-           cachedHistory = allData;
-           console.log(`Historical Data Cached! Loaded ${cachedHistory.length} days of data.`);
+           // Stitch the 2010-2013 data with the Live Bitfinex data
+           const combinedData = [...manualEarlyData, ...bitfinexData];
+           
+           // Sort chronologically just in case
+           combinedData.sort((a, b) => a.time - b.time);
+           
+           cachedHistory = combinedData;
+           console.log(`Historical Data Cached! Loaded ${cachedHistory.length} total days of data.`);
        }
    } catch (e) {
        console.error("History fetch error:", e);
@@ -99,15 +151,38 @@ async function fetchWatchlist() {
 }
  
 // ==========================================
-// 4. INITIALIZE & SET TIMERS (10 Minutes)
+// 4. INITIALIZE & CLOCK-SYNCHRONIZED TIMERS
 // ==========================================
+// Run immediately on startup
 fetchHistory();
 fetchLive();
 fetchWatchlist();
  
-setInterval(fetchLive, 600000);          // Fires exactly at 10m
-setInterval(fetchWatchlist, 601000);     // Fires 1 second later
-setInterval(fetchHistory, 605000);       // Fires 5 seconds later
+// Dynamically synchronizes intervals with the real-world clock
+function scheduleClockSyncUpdates() {
+   const now = new Date();
+   
+   // Determine exactly how many milliseconds have elapsed during the current hour
+   const msPastHour = (now.getMinutes() * 60 * 1000) + (now.getSeconds() * 1000) + now.getMilliseconds();
+   const tenMinutesMs = 10 * 60 * 1000;
+   
+   // Compute time remaining until the clock hits the next 10-minute marker (:00, :10, :20, etc.)
+   const msToNextTick = tenMinutesMs - (msPastHour % tenMinutesMs);
+   
+   setTimeout(() => {
+       console.log(`--- Executing Clock-Aligned Sync at ${new Date().toLocaleTimeString()} ---`);
+       
+       fetchLive();
+       setTimeout(fetchWatchlist, 1000);     // Fires 1 second later
+       setTimeout(fetchHistory, 5000);       // Fires 5 seconds later
+       
+       // Re-run setup for the next interval
+       scheduleClockSyncUpdates();
+   }, msToNextTick);
+}
+
+// Kick off the wall-clock schedule loop
+scheduleClockSyncUpdates();
  
 // ==========================================
 // 5. API ENDPOINTS FOR FRONTEND
