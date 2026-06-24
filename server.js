@@ -61,6 +61,7 @@ function loadEarlyData() {
         return []; 
     }
 }
+
 // Store it in memory once on server startup
 const manualEarlyData = loadEarlyData();
 
@@ -86,13 +87,12 @@ async function fetchHistory() {
                };
            });
            
-          // ==========================================
-           // 👉 PLACE THE 3 LINES RIGHT HERE 👈
+           // ==========================================
+           // STITCHING EARLY DATA WITH LIVE BITFINEX DATA
            // ==========================================
            const combinedData = [...manualEarlyData, ...bitfinexData];
            combinedData.sort((a, b) => a.time - b.time);
            cachedHistory = combinedData;
-           // ==========================================
 
            console.log(`Historical Data Cached! Loaded ${cachedHistory.length} total days of data.`);
        }
@@ -100,7 +100,6 @@ async function fetchHistory() {
        console.error("History fetch error:", e);
    }
 }
-
  
 // ==========================================
 // 2. FETCH LIVE PRICE (CoinCap, Kraken, KuCoin)
@@ -214,4 +213,12 @@ app.get('/api/live', (req, res) => {
  
 app.get('/api/watchlist', (req, res) => {
    res.json(cachedWatchlist);
+});
+
+// ==========================================
+// 6. START THE SERVER (This was missing!)
+// ==========================================
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+   console.log(`Pulse Backend running on port ${PORT}`);
 });
