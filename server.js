@@ -78,18 +78,20 @@ async function fetchHistory() {
                };
            });
            
-           // Stitch the 2010-2013 data with the Live Bitfinex data
+          // ==========================================
+           // 👉 PLACE THE 3 LINES RIGHT HERE 👈
+           // ==========================================
            const combinedData = [...manualEarlyData, ...bitfinexData];
-           
-           // Sort chronologically just in case
            combinedData.sort((a, b) => a.time - b.time);
-           
            cachedHistory = combinedData;
+           // ==========================================
+
            console.log(`Historical Data Cached! Loaded ${cachedHistory.length} total days of data.`);
        }
    } catch (e) {
        console.error("History fetch error:", e);
    }
+}
 }
  
 // ==========================================
