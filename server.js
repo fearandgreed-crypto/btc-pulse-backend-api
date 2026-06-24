@@ -18,41 +18,49 @@ function loadEarlyData() {
     console.log("Loading early historical data from CSV...");
     const earlyData = [];
     try {
-        // Read the CSV file from your local folder
         const csv = fs.readFileSync('./early_btc.csv', 'utf8');
-        
-        // Split the file into rows and skip the first row (the header)
         const lines = csv.split('\n').slice(1); 
         
-        // Bitfinex data starts April 1, 2013. We ignore any CSV rows after March 31, 2013.
-        const cutoffDate = new Date('2013-04-01').getTime();
+        // Force strict UTC comparison
+        const cutoffDate = new Date('2013-04-01T00:00:00Z').getTime();
         
         for (let line of lines) {
-            if (!line.trim()) continue; // Skip empty lines
+            if (!line.trim()) continue;
             
-            const [startStr, endStr, open, high, low, close, volume] = line.split(',');
-            const rowTime = new Date(startStr).getTime();
+            const cleanLine = line.replace('\r', ''); 
+            const [startStr, endStr, open, high, low, close, volume] = cleanLine.split(',');
             
-            // Automatically ignore CSV data that overlaps with Bitfinex
-            if (rowTime >= cutoffDate) continue;
+            // Force strict UTC midnight to match Bitfinex perfectly
+            const rowTime = new Date(startStr + 'T00:00:00Z').getTime();
             
-            earlyData.push({
-                time: rowTime, 
-                open: parseFloat(open),
-                high: parseFloat(high),
-                low: parseFloat(low),
-                close: parseFloat(close),
-                volume: parseFloat(volume) || 0
-            });
+            // Skip invalid dates or data that overlaps Bitfinex
+            if (isNaN(rowTime) || rowTime >= cutoffDate) continue;
+            
+            const o = parseFloat(open);
+            const c = parseFloat(close);
+            let v = parseFloat(volume);
+            
+            // CRITICAL: Prevent math formulas from crashing due to dividing by zero!
+            if (isNaN(v) || v <= 0) v = 0.01; 
+            
+            if (!isNaN(o) && !isNaN(c)) {
+                earlyData.push({
+                    time: rowTime, 
+                    open: o,
+                    high: parseFloat(high),
+                    low: parseFloat(low),
+                    close: c,
+                    volume: v
+                });
+            }
         }
-        console.log(`Successfully loaded ${earlyData.length} days of early history.`);
+        console.log(`✅ Successfully loaded ${earlyData.length} days of early history.`);
         return earlyData;
     } catch (e) {
-        console.error("Could not find or parse CSV! Ensure it is in the same folder.", e.message);
+        console.error("❌ CSV Error:", e.message);
         return []; 
     }
 }
-
 // Store it in memory once on server startup
 const manualEarlyData = loadEarlyData();
 
@@ -190,6 +198,12 @@ scheduleClockSyncUpdates();
 // 5. API ENDPOINTS FOR FRONTEND
 // ==========================================
 app.get('/api/history', (req, res) => {
+   // Force the browser/Wix to never cache this request
+   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+   res.setHeader('Pragma', 'no-cache');
+   res.setHeader('Expires', '0');
+   res.setHeader('Surrogate-Control', 'no-store');
+
    if (cachedHistory.length === 0) return res.status(503).json({ error: "Building cache, try again." });
    res.json(cachedHistory);
 });
@@ -200,9 +214,4 @@ app.get('/api/live', (req, res) => {
  
 app.get('/api/watchlist', (req, res) => {
    res.json(cachedWatchlist);
-});
- 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-   console.log(`Pulse Backend running on port ${PORT}`);
 });
