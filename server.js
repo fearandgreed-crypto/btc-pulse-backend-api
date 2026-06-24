@@ -19,7 +19,7 @@ function loadEarlyData() {
     const earlyData = [];
     try {
         // Read the CSV file from your local folder
-        const csv = fs.readFileSync('./bitcoin_2010-07-17_2024-05-23.csv', 'utf8');
+        const csv = fs.readFileSync('./early_btc.csv', 'utf8');
         
         // Split the file into rows and skip the first row (the header)
         const lines = csv.split('\n').slice(1); 
