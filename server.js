@@ -92,7 +92,7 @@ async function fetchHistory() {
        console.error("History fetch error:", e);
    }
 }
-}
+
  
 // ==========================================
 // 2. FETCH LIVE PRICE (CoinCap, Kraken, KuCoin)
