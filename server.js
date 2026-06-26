@@ -18,20 +18,24 @@ function loadEarlyData() {
     console.log("Loading early historical data from CSV...");
     const earlyData = [];
     try {
-        const csv = fs.readFileSync('./early_btc.csv', 'utf8');
+        // 1. Point to the new CSV file
+        const csv = fs.readFileSync('./data set 2013-03-31.csv', 'utf8');
         const lines = csv.split('\n').slice(1); 
         
-        // Force strict UTC comparison
         const cutoffDate = new Date('2013-04-01T00:00:00Z').getTime();
         
         for (let line of lines) {
-            if (!line.trim()) continue;
+            const cleanLine = line.replace('\r', '').trim();
             
-            const cleanLine = line.replace('\r', ''); 
+            // 2. Skip completely blank lines or rows that are just empty commas
+            if (!cleanLine || cleanLine.startsWith(',,,')) continue; 
+            
             const [startStr, endStr, open, high, low, close, volume] = cleanLine.split(',');
+            if (!startStr) continue;
             
-            // Force strict UTC midnight to match Bitfinex perfectly
-            const rowTime = new Date(startStr + 'T00:00:00Z').getTime();
+            // 3. Safely parse "M/D/YYYY" into strict UTC midnight
+            const [month, day, year] = startStr.split('/');
+            const rowTime = Date.UTC(parseInt(year), parseInt(month) - 1, parseInt(day));
             
             // Skip invalid dates or data that overlaps Bitfinex
             if (isNaN(rowTime) || rowTime >= cutoffDate) continue;
@@ -61,7 +65,6 @@ function loadEarlyData() {
         return []; 
     }
 }
-
 // Store it in memory once on server startup
 const manualEarlyData = loadEarlyData();
 
