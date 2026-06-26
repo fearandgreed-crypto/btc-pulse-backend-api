@@ -12,13 +12,12 @@ let cachedLivePrice = { price: 0, change: 0 };
 let cachedWatchlist = [];
  
 // ==========================================
-// 0. LOAD PRE-2013 DATA FROM CSV (Mt. Gox Era)
+// 0. LOAD PRE-2013 DATA FROM CSV (CONVERTED TO WEEKLY)
 // ==========================================
 function loadEarlyData() {
-    console.log("Loading early historical data from CSV...");
-    const earlyData = [];
+    console.log("Loading and converting early historical CSV to WEEKLY candles...");
+    const weeklyMap = {};
     try {
-        // 1. Point to the new CSV file
         const csv = fs.readFileSync('./data set 2013-03-31.csv', 'utf8');
         const lines = csv.split('\n').slice(1); 
         
@@ -27,44 +26,86 @@ function loadEarlyData() {
         for (let line of lines) {
             const cleanLine = line.replace('\r', '').trim();
             
-            // 2. Skip completely blank lines or rows that are just empty commas
             if (!cleanLine || cleanLine.startsWith(',,,')) continue; 
             
             const [startStr, endStr, open, high, low, close, volume] = cleanLine.split(',');
             if (!startStr) continue;
             
-            // 3. Safely parse "M/D/YYYY" into strict UTC midnight
+            // Parse "M/D/YYYY" into strict UTC midnight
             const [month, day, year] = startStr.split('/');
             const rowTime = Date.UTC(parseInt(year), parseInt(month) - 1, parseInt(day));
             
-            // Skip invalid dates or data that overlaps Bitfinex
             if (isNaN(rowTime) || rowTime >= cutoffDate) continue;
+
+            // Find the exact Monday of this week to align with Bitfinex 1W candles
+            const dateObj = new Date(rowTime);
+            const dayOfWeek = dateObj.getUTCDay(); // 0 = Sunday, 1 = Monday...
+            const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Shift to Monday
+            const mondayTime = rowTime - (daysToSubtract * 24 * 60 * 60 * 1000);
             
             const o = parseFloat(open);
+            const h = parseFloat(high);
+            const l = parseFloat(low);
             const c = parseFloat(close);
             let v = parseFloat(volume);
-            
-            // CRITICAL: Prevent math formulas from crashing due to dividing by zero!
             if (isNaN(v) || v <= 0) v = 0.01; 
             
             if (!isNaN(o) && !isNaN(c)) {
-                earlyData.push({
-                    time: rowTime, 
-                    open: o,
-                    high: parseFloat(high),
-                    low: parseFloat(low),
-                    close: c,
-                    volume: v
-                });
+                if (!weeklyMap[mondayTime]) {
+                    // Start a new week
+                    weeklyMap[mondayTime] = {
+                        time: mondayTime,
+                        open: o, 
+                        high: h,
+                        low: l,
+                        close: c, 
+                        volume: v,
+                        minDayTime: rowTime, // To track the first day of the week
+                        maxDayTime: rowTime  // To track the last day of the week
+                    };
+                } else {
+                    // Update existing week with daily data
+                    const week = weeklyMap[mondayTime];
+                    week.high = Math.max(week.high, h); // Highest high of the week
+                    week.low = Math.min(week.low, l);   // Lowest low of the week
+                    week.volume += v;                   // Add up total volume
+                    
+                    // If this row is earlier in the week, it becomes the Open price
+                    if (rowTime < week.minDayTime) {
+                        week.minDayTime = rowTime;
+                        week.open = o;
+                    }
+                    // If this row is later in the week, it becomes the Close price
+                    if (rowTime > week.maxDayTime) {
+                        week.maxDayTime = rowTime;
+                        week.close = c;
+                    }
+                }
             }
         }
-        console.log(`✅ Successfully loaded ${earlyData.length} days of early history.`);
+        
+        // Convert map back to an array, clean up temp variables, and sort chronologically
+        const earlyData = Object.values(weeklyMap)
+            .map(w => ({
+                time: w.time,
+                open: w.open,
+                high: w.high,
+                low: w.low,
+                close: w.close,
+                volume: w.volume
+            }))
+            .sort((a, b) => a.time - b.time);
+            
+        console.log(`✅ Successfully loaded ${earlyData.length} WEEKS of early history.`);
         return earlyData;
     } catch (e) {
         console.error("❌ CSV Error:", e.message);
         return []; 
     }
 }
+
+// Store it in memory once on server startup
+const manualEarlyData = loadEarlyData();
 // Store it in memory once on server startup
 const manualEarlyData = loadEarlyData();
 
@@ -74,7 +115,7 @@ const manualEarlyData = loadEarlyData();
 async function fetchHistory() {
    console.log("Fetching Historical Data...");
    try {
-       const url = 'https://api-pub.bitfinex.com/v2/candles/trade:1D:tBTCUSD/hist?limit=10000&sort=1';
+      const url = 'https://api-pub.bitfinex.com/v2/candles/trade:1W:tBTCUSD/hist?limit=10000&sort=1';
        const res = await fetch(url);
        const json = await res.json();
        
