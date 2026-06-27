@@ -11,30 +11,75 @@ let cachedLivePrice = { price: 0, change: 0 };
 let cachedWatchlist = [];
  
 // ==========================================
-// 1. FETCH HISTORICAL DATA (Bitfinex - Free, 10+ Years in 1 Call)
+// 1. FETCH HISTORICAL DATA (Merged: GitHub CSV + Bitfinex API)
 // ==========================================
 async function fetchHistory() {
-   console.log("Fetching Historical Data...");
+   console.log("Fetching Historical Data (Merging CSV & API)...");
    try {
-       const url = 'https://api-pub.bitfinex.com/v2/candles/trade:1D:tBTCUSD/hist?limit=10000&sort=1';
-       const res = await fetch(url);
-       const json = await res.json();
-       
-       if (Array.isArray(json) && json.length > 0) {
-           const allData = json.map(candle => {
-               return {
-                   time: candle[0],     // MTS
+       const api_url = 'https://api-pub.bitfinex.com/v2/candles/trade:1D:tBTCUSD/hist?limit=10000&sort=1';
+       const csv_url = 'https://raw.githubusercontent.com/fearandgreed-crypto/btc-pulse-backend-api/refs/heads/main/early_btc.csv';
+
+       // Fetch both datasets concurrently for speed
+       const [apiRes, csvRes] = await Promise.all([
+           fetch(api_url),
+           fetch(csv_url)
+       ]);
+
+       const apiJson = await apiRes.json();
+       const csvText = await csvRes.text();
+
+       // Use a Map to deduplicate dates. If both datasets have data for the same day, 
+       // the API data will overwrite the CSV data.
+       const unifiedDataMap = new Map();
+
+       // --- A. PARSE THE CSV DATA ---
+       const csvRows = csvText.split('\n').slice(1); // Split into lines and skip the header row
+       csvRows.forEach(row => {
+           if (!row.trim()) return;
+           
+           // Clean out quote marks and split by comma
+           const cleanRow = row.replace(/"/g, ''); 
+           const cols = cleanRow.split(',');
+
+           if (cols.length >= 6) {
+               // Append " UTC" so Node.js parses the date exactly at midnight UTC, matching Bitfinex
+               const timeMs = new Date(cols[0] + " UTC").getTime();
+               
+               if (!isNaN(timeMs)) {
+                   unifiedDataMap.set(timeMs, {
+                       time: timeMs,
+                       open: parseFloat(cols[2]),
+                       high: parseFloat(cols[3]),
+                       low: parseFloat(cols[4]),
+                       close: parseFloat(cols[5]),
+                       volume: parseFloat(cols[6]) || 0
+                   });
+               }
+           }
+       });
+
+       // --- B. PARSE THE BITFINEX DATA ---
+       // Bitfinex format: [MTS, OPEN, CLOSE, HIGH, LOW, VOL]
+       if (Array.isArray(apiJson) && apiJson.length > 0) {
+           apiJson.forEach(candle => {
+               const timeMs = candle[0];
+               unifiedDataMap.set(timeMs, {
+                   time: timeMs,
                    open: candle[1],
                    high: candle[3],
                    low: candle[4],
                    close: candle[2],
                    volume: candle[5]
-               };
+               });
            });
-           
-           cachedHistory = allData;
-           console.log(`Historical Data Cached! Loaded ${cachedHistory.length} days of data.`);
        }
+
+       // --- C. SORT AND CACHE ---
+       // Convert the Map back to a standard array and sort it from oldest to newest
+       cachedHistory = Array.from(unifiedDataMap.values()).sort((a, b) => a.time - b.time);
+       
+       console.log(`Historical Data Cached! Loaded ${cachedHistory.length} days of data.`);
+
    } catch (e) {
        console.error("History fetch error:", e);
    }
